@@ -13,3 +13,4 @@ sentence-transformers
 langchain-pinecone
 pinecone
 langchain-tavily
+asyncpg

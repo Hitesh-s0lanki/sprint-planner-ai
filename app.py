@@ -1,5 +1,6 @@
 import os
 import logging
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -28,11 +29,52 @@ logger = logging.getLogger("sprint-planner-ai")
 if "OPENAI_API_KEY" not in os.environ:
     logger.warning("OPENAI_API_KEY not set — the model will fail to initialize until it's provided.")
 
-# Create FastAPI app
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for startup and shutdown events.
+    Initialize DB pool and the LLM agent on startup.
+    Cleanly close DB pool on shutdown.
+    """
+    # Startup
+    logger.info("Starting up: creating DB pool...")
+    await db.get_pool()
+    logger.info("DB pool ready.")
+
+    # Initialize the model and agent here to avoid import-time failures.
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
+        logger.error("OPENAI_API_KEY not found in environment. The agent will not be available.")
+        app.state.agent = None
+    else:
+        try:
+            logger.info("Initializing ChatOpenAI model...")
+            model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
+            agent = SimpleAgent(model=model, tools=[])
+            app.state.agent = agent
+            logger.info("Agent initialized successfully.")
+        except Exception as exc:
+            logger.exception("Failed to initialize model/agent: %s", exc)
+            # Keep app running but mark agent unavailable
+            app.state.agent = None
+
+    yield  # App runs here
+
+    # Shutdown
+    logger.info("Shutting down: closing DB pool...")
+    pool = getattr(db, "_pool", None)
+    if pool:
+        await pool.close()
+    logger.info("Shutdown complete.")
+
+
+# Create FastAPI app with lifespan handler
 app = FastAPI(
     title="Sprint Planner AI - Simple Agent Streaming Server",
     description="A FastAPI server to stream responses from a LangChain agent.",
     docs_url="/",
+    lifespan=lifespan,
 )
 
 # CORS middleware for local development
@@ -51,47 +93,6 @@ app.add_middleware(
 
 # Include routers (chat_router contains session/message endpoints)
 app.include_router(chat_router)
-
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Initialize DB pool and the LLM agent on startup.
-    Storing them on app.state so endpoints can access them.
-    """
-    logger.info("Starting up: creating DB pool...")
-    await db.get_pool()
-    logger.info("DB pool ready.")
-
-    # Initialize the model and agent here to avoid import-time failures.
-    openai_key = os.getenv("OPENAI_API_KEY")
-    if not openai_key:
-        logger.error("OPENAI_API_KEY not found in environment. The agent will not be available.")
-        app.state.agent = None
-        return
-
-    try:
-        logger.info("Initializing ChatOpenAI model...")
-        model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
-        agent = SimpleAgent(model=model, tools=[])
-        app.state.agent = agent
-        logger.info("Agent initialized successfully.")
-    except Exception as exc:
-        logger.exception("Failed to initialize model/agent: %s", exc)
-        # Keep app running but mark agent unavailable
-        app.state.agent = None
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """
-    Cleanly close DB pool if present.
-    """
-    logger.info("Shutting down: closing DB pool...")
-    pool = getattr(db, "_pool", None)
-    if pool:
-        await pool.close()
-    logger.info("Shutdown complete.")
 
 
 @app.post("/stream")
