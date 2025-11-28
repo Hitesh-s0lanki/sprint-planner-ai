@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 
 # local imports
 from src.routes.chat_router import router as chat_router
+from src.routes.ai_router import router as ai_router
 from src.handlers.streaming import stream_generator
 from src.schemas import ChatRequest, CharResponse
 from src import db
@@ -93,6 +94,7 @@ app.add_middleware(
 
 # Include routers (chat_router contains session/message endpoints)
 app.include_router(chat_router)
+app.include_router(ai_router)
 
 
 @app.post("/stream")
