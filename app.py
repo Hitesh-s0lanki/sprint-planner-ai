@@ -97,7 +97,7 @@ app.include_router(chat_router)
 app.include_router(ai_router)
 
 
-@app.post("/stream")
+@app.post("/api/chat")
 async def stream_chat(request: ChatRequest):
     """
     Stream chat responses from the agent in NDJSON CharResponse format.
