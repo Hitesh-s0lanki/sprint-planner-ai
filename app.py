@@ -29,6 +29,9 @@ logger = logging.getLogger("sprint-planner-ai")
 # Validate required env vars early (but don't instantiate the model until startup)
 if "OPENAI_API_KEY" not in os.environ:
     logger.warning("OPENAI_API_KEY not set — the model will fail to initialize until it's provided.")
+    
+if not os.environ.get("TAVILY_API_KEY"):
+    logger.warning("TAVILY_API_KEY not set — the model will fail to initialize until it's provided.")
 
 
 @asynccontextmanager
