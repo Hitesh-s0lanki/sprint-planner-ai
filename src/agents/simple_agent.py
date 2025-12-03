@@ -21,6 +21,8 @@ class SimpleAgent:
     def invoke(self, messages: Union[List[Dict[str, str]], List[BaseMessage]]) -> Dict[str, Any]:
         return self.agent.invoke({"messages": messages})
 
-    async def astream(self, messages: Union[List[Dict[str, str]], List[BaseMessage]]) -> AsyncGenerator[Dict[str, Any], Any]:
-        async for chunk in self.agent.astream({"messages": messages}):
+    async def astream(self, messages: Union[List[Dict[str, str]], List[BaseMessage]], session_id: str) -> AsyncGenerator[Dict[str, Any], Any]:
+        async for chunk in self.agent.astream({"messages": messages}, config = {
+            "thread_id": session_id
+        }):
             yield chunk

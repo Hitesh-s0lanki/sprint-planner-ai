@@ -24,3 +24,4 @@ class OpenAILLM:
     @staticmethod
     def get_llm_with_structure_output(llm, state):
         return llm.with_structured_output(state)
+
