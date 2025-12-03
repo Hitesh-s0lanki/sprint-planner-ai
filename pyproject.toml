@@ -18,6 +18,7 @@ dependencies = [
     "langchain-tavily>=0.2.13",
     "langgraph>=1.0.3",
     "pinecone>=7.3.0",
+    "psycopg[binary,pool]>=3.3.0",
     "pytest>=9.0.1",
     "python-dotenv>=1.2.1",
     "sentence-transformers>=5.1.2",
