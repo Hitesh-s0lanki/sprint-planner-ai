@@ -40,6 +40,10 @@ class ChatResponse(BaseModel):
         default=None,
         description="Last message sent by the user."
     )
+    formatted_output: Optional[dict] = Field(
+        default=None,
+        description="Formatted output of the agent. This is the output of the agent in a dictionary format."
+    )
     error_message: Optional[str] = Field(
         default=None,
         description="Error message if the connection is in error status."

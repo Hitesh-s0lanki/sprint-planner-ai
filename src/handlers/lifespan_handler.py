@@ -3,9 +3,10 @@ from fastapi import FastAPI
 import os
 from dotenv import load_dotenv
 from src.llms.openai_llm import OpenAILLM
-from src.agents.simple_agent import SimpleAgent
 from src.database.neon_db import NeonDB
 import logging
+
+from src.graphs.workflow import Workflow
 
 load_dotenv()
 
@@ -37,17 +38,17 @@ async def lifespan(app: FastAPI):
     openai_key = os.getenv("OPENAI_API_KEY")
     
     if not openai_key:
-        logger.error("OPENAI_API_KEY not found in environment. The agent will not be available.")
-        app.state.agent = None
+        logger.error("OPENAI_API_KEY not found in environment. The workflow will not be available.")
+        app.state.workflow = None
     else:
         try:
             model = OpenAILLM().get_llm_model()
-            agent = SimpleAgent(model=model)
-            
-            app.state.agent = agent
-            logger.info("Agent initialized successfully.")
+            workflow = Workflow(model=model)
+
+            app.state.workflow = workflow
+            logger.info("Workflow initialized successfully.")
         except Exception as exc:
-            logger.exception("Failed to initialize model/agent: %s", exc)
+            logger.exception("Failed to initialize workflow: %s", exc)
             
     yield  # App runs here
     

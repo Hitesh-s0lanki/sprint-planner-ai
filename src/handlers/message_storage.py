@@ -43,7 +43,6 @@ async def save_user_message(chat_request: ChatRequest, db, stage: int) -> bool:
                 stage=stage
             )
             db.create_chat_message(user_message)
-            logger.info(f"Saved user message to DB for session {chat_request.session_id}")
             return True
         except (psycopg.OperationalError, psycopg.InterfaceError) as e:
             if attempt < max_retries - 1:
@@ -67,7 +66,8 @@ async def save_agent_message(
     user_id: Optional[str],
     content: str,
     db,
-    stage: int
+    stage: int,
+    formatted_output: Optional[str] = None
 ) -> bool:
     """
     Save agent response to database with retry logic.
@@ -78,6 +78,7 @@ async def save_agent_message(
         content: The agent response content
         db: Database instance
         stage: The idea state stage (1-9)
+        formatted_output: the formatted output of the agent
     
     Returns:
         bool: True if saved successfully, False otherwise
@@ -96,11 +97,11 @@ async def save_agent_message(
                 user_id=user_id,
                 role="assistant",
                 content=content,
+                formatted_output=formatted_output,
                 metadata={},
                 stage=stage
             )
             db.create_chat_message(agent_message)
-            logger.info(f"Saved agent response to DB for session {session_id}")
             return True
         except (psycopg.OperationalError, psycopg.InterfaceError) as e:
             if attempt < max_retries - 1:
@@ -242,7 +243,10 @@ async def get_conversation_history(session_id: str, db) -> List:
             if msg.role == "user":
                 langchain_messages.append(HumanMessage(content=msg.content))
             elif msg.role == "assistant":
-                langchain_messages.append(AIMessage(content=msg.content))
+                if msg.formatted_output:
+                    langchain_messages.append(AIMessage(content=msg.formatted_output))
+                else:
+                    langchain_messages.append(AIMessage(content=msg.content))
         
         logger.debug(f"Converted {len(langchain_messages)} messages to LangChain format for session {session_id}")
         return langchain_messages

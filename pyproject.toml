@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "arxiv>=2.3.1",
     "asyncpg>=0.31.0",
     "fastapi>=0.121.2",
     "gradio>=5.49.1",
@@ -22,5 +23,6 @@ dependencies = [
     "pytest>=9.0.1",
     "python-dotenv>=1.2.1",
     "sentence-transformers>=5.1.2",
+    "tavily-python>=0.7.14",
     "uvicorn>=0.38.0",
 ]
