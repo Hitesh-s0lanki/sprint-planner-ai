@@ -1,5 +1,19 @@
 from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
+class UserPreferences(BaseModel):
+    """User preferences associated with the request."""
+    user_id: Optional[str] = Field(
+        default=None,
+        description="Optional user ID associated with the request."
+    )
+    user_name: Optional[str] = Field(
+        default=None,
+        description="Optional user message associated with the request."
+    )
+    user_email: Optional[str] = Field(
+        default=None,
+        description="Optional user email associated with the request."
+    )
 
 class ChatRequest(BaseModel):
     """Incoming request from client → server."""
@@ -20,6 +34,10 @@ class ChatRequest(BaseModel):
     idea_state_stage: int = Field(
         default=0, # means not started
         description="Current stage of the idea state."
+    )
+    user_preferences: Optional[UserPreferences] = Field(
+        default=None,
+        description="Optional user preferences associated with the request."
     )
     
 
