@@ -1,5 +1,19 @@
 from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
+class UserPreferences(BaseModel):
+    """User preferences associated with the request."""
+    user_id: Optional[str] = Field(
+        default=None,
+        description="Optional user ID associated with the request."
+    )
+    user_name: Optional[str] = Field(
+        default=None,
+        description="Optional user message associated with the request."
+    )
+    user_email: Optional[str] = Field(
+        default=None,
+        description="Optional user email associated with the request."
+    )
 
 class ChatRequest(BaseModel):
     """Incoming request from client → server."""
@@ -21,6 +35,10 @@ class ChatRequest(BaseModel):
         default=0, # means not started
         description="Current stage of the idea state."
     )
+    user_preferences: Optional[UserPreferences] = Field(
+        default=None,
+        description="Optional user preferences associated with the request."
+    )
     
 
 class ChatResponse(BaseModel):
@@ -39,6 +57,10 @@ class ChatResponse(BaseModel):
     response_content: Optional[str] = Field(
         default=None,
         description="Last message sent by the user."
+    )
+    formatted_output: Optional[dict] = Field(
+        default=None,
+        description="Formatted output of the agent. This is the output of the agent in a dictionary format."
     )
     error_message: Optional[str] = Field(
         default=None,

@@ -12,14 +12,14 @@ router = APIRouter(prefix="/api")
 @router.post("/streaming")
 async def stream_chat(chat_request: ChatRequest, http_request: Request):
     # get the agent and database from the app state
-    agent = getattr(http_request.app.state, "agent", None)
+    workflow = getattr(http_request.app.state, "workflow", None)
     db = getattr(http_request.app.state, "db", None)
     
-    if agent is None:
-        logger.error("Agent not initialized. Cannot serve/stream.")
+    if workflow is None:
+        logger.error("Workflow not initialized. Cannot serve/stream.")
         return ChatResponse(
             connection_status="error",
-            error_message="Agent not initialized. Cannot serve/stream.",
+            error_message="Workflow not initialized. Cannot serve/stream.",
             idea_state_stage=chat_request.idea_state_stage
         )
 
@@ -27,7 +27,7 @@ async def stream_chat(chat_request: ChatRequest, http_request: Request):
         # stream_generator yields NDJSON lines (string) — use StreamingResponse
         # Pass the full ChatRequest and database to stream_generator
         return StreamingResponse(
-            stream_generator(chat_request, agent, db),
+            stream_generator(chat_request, workflow, db),
             media_type="application/x-ndjson",
             headers={
                 "Cache-Control": "no-cache",

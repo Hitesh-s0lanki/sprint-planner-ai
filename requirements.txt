@@ -9,6 +9,8 @@ ipykernel
 python-dotenv
 fastapi
 uvicorn
+tavily-python
+arxiv
 sentence-transformers
 langchain-pinecone
 pinecone
