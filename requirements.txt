@@ -9,8 +9,11 @@ ipykernel
 python-dotenv
 fastapi
 uvicorn
+tavily-python
+arxiv
 sentence-transformers
 langchain-pinecone
 pinecone
 langchain-tavily
 asyncpg
+psycopg[binary,pool]

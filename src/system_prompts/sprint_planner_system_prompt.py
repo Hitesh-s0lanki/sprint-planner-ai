@@ -9,7 +9,7 @@ transform the user's idea context into a fully structured 4-week sprint plan wit
 how you must plan tasks:
 
 1. skill matching
-   - analyze each team member’s background and strengths.
+   - analyze each team member's background and strengths.
    - assign tasks to the correct `assigneeid` based on expertise.
 
 2. granularity

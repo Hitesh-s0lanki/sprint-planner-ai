@@ -1,0 +1,62 @@
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+import os
+from dotenv import load_dotenv
+from src.llms.openai_llm import OpenAILLM
+from src.database.neon_db import NeonDB
+import logging
+
+from src.graphs.workflow import Workflow
+
+load_dotenv()
+
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("sprint-planner-ai")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for startup and shutdown events.
+    Initialize DB pool and the LLM agent on startup.
+    Cleanly close DB pool on shutdown.
+    """
+
+    # Initialize database
+    try:
+        db = NeonDB()
+        # Initialize database schemas (create tables if they don't exist)
+        db.init_chat_schema()
+        db.init_idea_state_schema()
+        app.state.db = db
+        logger.info("Database initialized successfully.")
+    except Exception as exc:
+        logger.exception("Failed to initialize database: %s", exc)
+        app.state.db = None
+
+    # Initialize the model and agent here to avoid import-time failures.
+    openai_key = os.getenv("OPENAI_API_KEY")
+    
+    if not openai_key:
+        logger.error("OPENAI_API_KEY not found in environment. The workflow will not be available.")
+        app.state.workflow = None
+    else:
+        try:
+            model = OpenAILLM().get_llm_model()
+            workflow = Workflow(model=model)
+
+            app.state.workflow = workflow
+            logger.info("Workflow initialized successfully.")
+        except Exception as exc:
+            logger.exception("Failed to initialize workflow: %s", exc)
+            
+    yield  # App runs here
+    
+    # Cleanup: close database pool
+    if hasattr(app.state, "db") and app.state.db:
+        try:
+            app.state.db.pool.close()
+            logger.info("Database pool closed.")
+        except Exception as exc:
+            logger.exception("Error closing database pool: %s", exc)
+    
