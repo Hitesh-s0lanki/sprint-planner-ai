@@ -4,6 +4,7 @@ from typing import Optional, List, Literal
 class TeamMember(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
+    email: Optional[str] = None
     profession: Optional[str] = None
     role: Optional[str] = None
     description: Optional[str] = None

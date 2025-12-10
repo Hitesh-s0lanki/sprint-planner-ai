@@ -9,6 +9,7 @@ from psycopg.types.json import Json
 
 from src.models.chat_message_model import ChatMessageModel
 from src.models.idea_state_model import IdeaState
+from datetime import datetime
 
 class NeonDB:
     """
@@ -229,8 +230,7 @@ class NeonDB:
     def get_chat_messages_by_session(
         self,
         session_id: str,
-        stage: Optional[int] = None,
-        limit: int = 100,
+        stage: Optional[int] = None
     ) -> List[ChatMessageModel]:
         """
         Fetch chat messages for a given session_id (optionally filtered by stage).
@@ -248,7 +248,6 @@ class NeonDB:
             params = {
                 "session_id": session_id,
                 "stage": stage,
-                "limit": limit,
             }
         else:
             sql = """
@@ -256,11 +255,9 @@ class NeonDB:
             FROM chat_messages
             WHERE session_id = %(session_id)s
             ORDER BY created_at ASC
-            LIMIT %(limit)s;
             """
             params = {
                 "session_id": session_id,
-                "limit": limit,
             }
 
         rows = self.fetch_all(sql, params)
@@ -359,4 +356,538 @@ class NeonDB:
 
         # Save back
         return self.upsert_idea_state(updated)
+    
+    # ─────────────────────────────────────────
+    # Documents
+    # ─────────────────────────────────────────
 
+    def create_document(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        title: str = "Untitled",
+        icon: Optional[str] = None,
+        content: Any = None,
+        added_by: str = "user",  # 'user' | 'ai'
+    ) -> Dict[str, Any]:
+        """
+        Insert a new document row.
+
+        'content' is stored as JSONB (BlockNote doc). If None, defaults to [].
+        """
+        if content is None:
+            content = []
+
+        sql = """
+        INSERT INTO documents (
+            project_id,
+            session_id,
+            title,
+            icon,
+            content,
+            added_by
+        )
+        VALUES (
+            %(project_id)s,
+            %(session_id)s,
+            %(title)s,
+            %(icon)s,
+            %(content)s,
+            %(added_by)s
+        )
+        RETURNING *;
+        """
+
+        params = {
+            "project_id": project_id,
+            "session_id": session_id,
+            "title": title,
+            "icon": icon,
+            "content": Json(content),
+            "added_by": added_by,
+        }
+
+        row = self.fetch_one(sql, params)
+        if row is None:
+            raise RuntimeError("Failed to create document")
+
+        return row
+
+    def update_document(
+        self,
+        document_id: str,
+        *,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        title: Optional[str] = None,
+        icon: Optional[str] = None,
+        content: Any = None,
+        added_by: Optional[str] = None,
+        is_trashed: Optional[bool] = None,
+        trashed_at: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        Partially update a document by id.
+        Only non-None fields are updated.
+        Also bumps updated_at = NOW().
+        """
+        fields: Dict[str, Any] = {}
+        if project_id is not None:
+            fields["project_id"] = project_id
+        if session_id is not None:
+            fields["session_id"] = session_id
+        if title is not None:
+            fields["title"] = title
+        if icon is not None:
+            fields["icon"] = icon
+        if content is not None:
+            fields["content"] = Json(content)
+        if added_by is not None:
+            fields["added_by"] = added_by
+        if is_trashed is not None:
+            fields["is_trashed"] = is_trashed
+        if trashed_at is not None:
+            fields["trashed_at"] = trashed_at
+
+        if not fields:
+            raise ValueError("No fields provided to update_document")
+
+        set_clauses = []
+        params: Dict[str, Any] = {"id": document_id}
+        for idx, (col, value) in enumerate(fields.items(), start=1):
+            key = f"v{idx}"
+            set_clauses.append(f"{col} = %({key})s")
+            params[key] = value
+
+        # always bump updated_at
+        set_clauses.append("updated_at = NOW()")
+
+        sql = f"""
+        UPDATE documents
+        SET {", ".join(set_clauses)}
+        WHERE id = %(id)s
+        RETURNING *;
+        """
+
+        row = self.fetch_one(sql, params)
+        if row is None:
+            raise RuntimeError("Document not found or not updated")
+
+        return row
+    
+    def get_documents_by_session_id(
+        self,
+        session_id: str,
+        *,
+        include_trashed: bool = False,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch all documents for a given session_id.
+
+        - Ordered by created_at ASC (oldest → newest)
+        - By default excludes trashed documents
+        """
+        if include_trashed:
+            sql = """
+            SELECT *
+            FROM documents
+            WHERE session_id = %(session_id)s
+            ORDER BY created_at ASC
+            LIMIT %(limit)s;
+            """
+            params = {
+                "session_id": session_id,
+                "limit": limit,
+            }
+        else:
+            sql = """
+            SELECT *
+            FROM documents
+            WHERE session_id = %(session_id)s
+              AND is_trashed = FALSE
+            ORDER BY created_at ASC
+            LIMIT %(limit)s;
+            """
+            params = {
+                "session_id": session_id,
+                "limit": limit,
+            }
+
+        return self.fetch_all(sql, params)
+    
+    # ─────────────────────────────────────────
+    # Projects
+    # ─────────────────────────────────────────
+    
+    def create_project(
+        self,
+        *,
+        key: str,
+        name: str,
+        description: Optional[str] = None,
+        status: str = "active",  # 'active' | 'inactive' | 'archived'
+        lead_user_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Insert a new project.
+        """
+        sql = """
+        INSERT INTO projects (
+            key,
+            name,
+            description,
+            project_status,
+            lead_user_id
+        )
+        VALUES (
+            %(key)s,
+            %(name)s,
+            %(description)s,
+            %(status)s,
+            %(lead_user_id)s
+        )
+        RETURNING *;
+        """
+
+        params = {
+            "key": key,
+            "name": name,
+            "description": description,
+            "status": status,
+            "lead_user_id": lead_user_id,
+        }
+
+        row = self.fetch_one(sql, params)
+        if row is None:
+            raise RuntimeError("Failed to create project")
+
+        return row
+
+    def update_project(
+        self,
+        project_id: str,
+        *,
+        key: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        status: Optional[str] = None,
+        lead_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Partially update a project by id.
+        Only non-None fields are updated.
+        Also bumps updated_at = NOW().
+        """
+        fields: Dict[str, Any] = {}
+        if key is not None:
+            fields["key"] = key
+        if name is not None:
+            fields["name"] = name
+        if description is not None:
+            fields["description"] = description
+        if status is not None:
+            fields["project_status"] = status
+        if lead_user_id is not None:
+            fields["lead_user_id"] = lead_user_id
+
+        if not fields:
+            raise ValueError("No fields provided to update_project")
+
+        set_clauses = []
+        params: Dict[str, Any] = {"id": project_id}
+        for idx, (col, value) in enumerate(fields.items(), start=1):
+            key_param = f"v{idx}"
+            set_clauses.append(f"{col} = %({key_param})s")
+            params[key_param] = value
+
+        set_clauses.append("updated_at = NOW()")
+
+        sql = f"""
+        UPDATE projects
+        SET {", ".join(set_clauses)}
+        WHERE id = %(id)s
+        RETURNING *;
+        """
+
+        row = self.fetch_one(sql, params)
+        if row is None:
+            raise RuntimeError("Project not found or not updated")
+
+        return row
+    
+    # ─────────────────────────────────────────
+    # Tasks
+    # ─────────────────────────────────────────
+    
+    def create_task(
+        self,
+        *,
+        project_id: str,
+        key: str,          # e.g. "SP-12"
+        title: str,
+        description: Optional[str] = None,
+        status: str = "backlog",   # enum: backlog|todo|in_progress|done|cancelled
+        priority: str = "Medium",
+        assignee_id: Optional[str] = None,
+        reporter_id: Optional[str] = None,
+        parent_task_id: Optional[str] = None,
+        due_date: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        Insert a new task.
+        """
+        sql = """
+        INSERT INTO tasks (
+            project_id,
+            key,
+            title,
+            description,
+            task_status,
+            priority,
+            assignee_id,
+            reporter_id,
+            parent_task_id,
+            due_date
+        )
+        VALUES (
+            %(project_id)s,
+            %(key)s,
+            %(title)s,
+            %(description)s,
+            %(status)s,
+            %(priority)s,
+            %(assignee_id)s,
+            %(reporter_id)s,
+            %(parent_task_id)s,
+            %(due_date)s
+        )
+        RETURNING *;
+        """
+
+        params = {
+            "project_id": project_id,
+            "key": key,
+            "title": title,
+            "description": description,
+            "status": status,
+            "priority": priority,
+            "assignee_id": assignee_id,
+            "reporter_id": reporter_id,
+            "parent_task_id": parent_task_id,
+            "due_date": due_date,
+        }
+
+        row = self.fetch_one(sql, params)
+        if row is None:
+            raise RuntimeError("Failed to create task")
+
+        return row
+
+    def update_task(
+        self,
+        task_id: str,
+        *,
+        project_id: Optional[str] = None,
+        key: Optional[str] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        status: Optional[str] = None,
+        priority: Optional[str] = None,
+        assignee_id: Optional[str] = None,
+        reporter_id: Optional[str] = None,
+        parent_task_id: Optional[str] = None,
+        due_date: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        Partially update a task by id.
+        Only non-None fields are updated.
+        Also bumps updated_at = NOW().
+        """
+        fields: Dict[str, Any] = {}
+        if project_id is not None:
+            fields["project_id"] = project_id
+        if key is not None:
+            fields["key"] = key
+        if title is not None:
+            fields["title"] = title
+        if description is not None:
+            fields["description"] = description
+        if status is not None:
+            fields["task_status"] = status
+        if priority is not None:
+            fields["priority"] = priority
+        if assignee_id is not None:
+            fields["assignee_id"] = assignee_id
+        if reporter_id is not None:
+            fields["reporter_id"] = reporter_id
+        if parent_task_id is not None:
+            fields["parent_task_id"] = parent_task_id
+        if due_date is not None:
+            fields["due_date"] = due_date
+
+        if not fields:
+            raise ValueError("No fields provided to update_task")
+
+        set_clauses = []
+        params: Dict[str, Any] = {"id": task_id}
+        for idx, (col, value) in enumerate(fields.items(), start=1):
+            key_param = f"v{idx}"
+            set_clauses.append(f"{col} = %({key_param})s")
+            params[key_param] = value
+
+        set_clauses.append("updated_at = NOW()")
+
+        sql = f"""
+        UPDATE tasks
+        SET {", ".join(set_clauses)}
+        WHERE id = %(id)s
+        RETURNING *;
+        """
+
+        row = self.fetch_one(sql, params)
+        if row is None:
+            raise RuntimeError("Task not found or not updated")
+
+        return row
+    
+    def create_task_dependency(
+        self,
+        *,
+        task_id: str,
+        depends_on_task_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Insert a new task dependency (task_id depends on depends_on_task_id).
+
+        PK is (task_id, depends_on_task_id). If you want to silently ignore
+        duplicates, you can add ON CONFLICT DO NOTHING.
+        """
+        sql = """
+        INSERT INTO task_dependencies (
+            task_id,
+            depends_on_task_id
+        )
+        VALUES (
+            %(task_id)s,
+            %(depends_on_task_id)s
+        )
+        RETURNING *;
+        """
+
+        params = {
+            "task_id": task_id,
+            "depends_on_task_id": depends_on_task_id,
+        }
+
+        row = self.fetch_one(sql, params)
+        if row is None:
+            raise RuntimeError("Failed to create task_dependency")
+
+        return row
+
+    def update_task_dependency(
+        self,
+        *,
+        task_id: str,
+        depends_on_task_id: str,
+        new_task_id: Optional[str] = None,
+        new_depends_on_task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Update a task dependency's keys.
+        Useful if you rewire dependency graph.
+
+        WHERE (task_id, depends_on_task_id) = (old values).
+        """
+        fields: Dict[str, Any] = {}
+        if new_task_id is not None:
+            fields["task_id"] = new_task_id
+        if new_depends_on_task_id is not None:
+            fields["depends_on_task_id"] = new_depends_on_task_id
+
+        if not fields:
+            raise ValueError("No fields provided to update_task_dependency")
+
+        set_clauses = []
+        params: Dict[str, Any] = {
+            "old_task_id": task_id,
+            "old_depends_on_task_id": depends_on_task_id,
+        }
+
+        for idx, (col, value) in enumerate(fields.items(), start=1):
+            key_param = f"v{idx}"
+            set_clauses.append(f"{col} = %({key_param})s")
+            params[key_param] = value
+
+        sql = f"""
+        UPDATE task_dependencies
+        SET {", ".join(set_clauses)}
+        WHERE task_id = %(old_task_id)s
+          AND depends_on_task_id = %(old_depends_on_task_id)s
+        RETURNING *;
+        """
+
+        row = self.fetch_one(sql, params)
+        if row is None:
+            raise RuntimeError("Task dependency not found or not updated")
+
+        return row
+    
+    # ─────────────────────────────────────────
+    # User management
+    # ─────────────────────────────────────────
+    
+    def update_user(
+        self,
+        user_id: str,
+        *,
+        clerk_id: Optional[str] = None,
+        email: Optional[str] = None,
+        name: Optional[str] = None,
+        role: Optional[str] = None,          # 'individual' | 'investor' | 'admin'
+        description: Optional[str] = None,
+        profession: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Partially update a user by id.
+        Only non-None fields are updated.
+        """
+        fields: Dict[str, Any] = {}
+        if clerk_id is not None:
+            fields["clerk_id"] = clerk_id
+        if email is not None:
+            fields["email"] = email
+        if name is not None:
+            fields["name"] = name
+        if role is not None:
+            fields["role"] = role
+        if description is not None:
+            fields["description"] = description
+        if profession is not None:
+            fields["profession"] = profession
+
+        if not fields:
+            raise ValueError("No fields provided to update_user")
+
+        set_clauses = []
+        params: Dict[str, Any] = {"id": user_id}
+        for idx, (col, value) in enumerate(fields.items(), start=1):
+            key_param = f"v{idx}"
+            set_clauses.append(f"{col} = %({key_param})s")
+            params[key_param] = value
+
+        sql = f"""
+        UPDATE users
+        SET {", ".join(set_clauses)}
+        WHERE id = %(id)s
+        RETURNING *;
+        """
+
+        row = self.fetch_one(sql, params)
+        if row is None:
+            raise RuntimeError("User not found or not updated")
+
+        return row
+    

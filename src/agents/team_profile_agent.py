@@ -1,6 +1,5 @@
 from langchain.agents import create_agent
-from typing import AsyncGenerator, List, Dict, Any, Sequence, Union
-from langchain_core.tools import BaseTool
+from typing import AsyncGenerator, List, Dict, Any, Union
 from langchain_core.messages import BaseMessage
 from langchain.agents.structured_output import ProviderStrategy
 import json
@@ -9,15 +8,17 @@ import logging
 from src.states.team_profile_agent_state import TeamProfileState
 from src.system_prompts.team_profile import get_team_profile_instructions
 
+from src.tools.research_tool import research_tool
+
 logger = logging.getLogger(__name__)
 
 class TeamProfileAgent:
     
-    def __init__(self, model, tools: Sequence[BaseTool] = None):
+    def __init__(self, model):
         self.name = "Team Profile Agent"
         self.instructions = get_team_profile_instructions()
         self.model = model
-        self.tools = tools or []
+        self.tools = [research_tool]
         
         # Create the agent executable upon initialization
         self.agent = create_agent(
