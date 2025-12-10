@@ -40,10 +40,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
+        "*",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -76,7 +73,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 app.include_router(chat_streaming_router)
 
 
-# if __name__ == "__main__":
-#     # Use python -m uvicorn app:app --reload --port 8000 in production dev.
-#     print("Starting FastAPI server on http://localhost:8000")
-#     uvicorn.run(app, host="0.0.0.0", port=8000)
+if __name__ == "__main__":
+    # Use python -m uvicorn app:app --reload --port 8000 in production dev.
+    print("Starting FastAPI server on http://localhost:8000")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
