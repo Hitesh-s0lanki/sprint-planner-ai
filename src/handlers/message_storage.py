@@ -5,19 +5,21 @@ import logging
 import asyncio
 import uuid
 import json
+import random
 from typing import Optional, List, Dict
 from langchain_core.messages import HumanMessage, AIMessage
 from src.models.chat_transfer_model import ChatResponse, ChatRequest
 from src.models.chat_message_model import ChatMessageModel
 from src.states.global_idea_state import GlobalIdeaState
 import psycopg
+import psycopg_pool
 
 logger = logging.getLogger(__name__)
 
 
 async def save_user_message(chat_request: ChatRequest, db, stage: int) -> bool:
     """
-    Save user message to database with retry logic.
+    Save user message to database with retry logic and connection error handling.
     
     Args:
         chat_request: The chat request containing user message
@@ -31,7 +33,7 @@ async def save_user_message(chat_request: ChatRequest, db, stage: int) -> bool:
         return False
     
     max_retries = 3
-    retry_delay = 0.5
+    base_retry_delay = 0.5
     
     for attempt in range(max_retries):
         try:
@@ -46,14 +48,21 @@ async def save_user_message(chat_request: ChatRequest, db, stage: int) -> bool:
             )
             db.create_chat_message(user_message)
             return True
-        except (psycopg.OperationalError, psycopg.InterfaceError) as e:
+        except (psycopg.OperationalError, psycopg.InterfaceError, psycopg_pool.PoolTimeout) as e:
             if attempt < max_retries - 1:
-                wait_time = retry_delay * (2 ** attempt)
+                # Exponential backoff with jitter
+                wait_time = base_retry_delay * (2 ** attempt) + random.uniform(0, 0.1)
                 logger.warning(
-                    f"Error saving user message (attempt {attempt + 1}/{max_retries}): {e}. "
-                    f"Retrying in {wait_time}s..."
+                    f"Database connection error saving user message (attempt {attempt + 1}/{max_retries}): {e}. "
+                    f"Retrying in {wait_time:.2f}s..."
                 )
                 await asyncio.sleep(wait_time)
+                # Try to reconnect pool if it's closed
+                if hasattr(db, 'pool') and hasattr(db.pool, 'check'):
+                    try:
+                        db.pool.check()
+                    except Exception:
+                        pass
             else:
                 logger.error(f"Failed to save user message after {max_retries} attempts: {e}", exc_info=True)
         except Exception as e:
@@ -72,7 +81,7 @@ async def save_agent_message(
     formatted_output: Optional[str] = None
 ) -> bool:
     """
-    Save agent response to database with retry logic.
+    Save agent response to database with retry logic and connection error handling.
     
     Args:
         session_id: The session ID
@@ -89,7 +98,7 @@ async def save_agent_message(
         return False
     
     max_retries = 3
-    retry_delay = 0.5
+    base_retry_delay = 0.5
     
     for attempt in range(max_retries):
         try:
@@ -105,14 +114,21 @@ async def save_agent_message(
             )
             db.create_chat_message(agent_message)
             return True
-        except (psycopg.OperationalError, psycopg.InterfaceError) as e:
+        except (psycopg.OperationalError, psycopg.InterfaceError, psycopg_pool.PoolTimeout) as e:
             if attempt < max_retries - 1:
-                wait_time = retry_delay * (2 ** attempt)
+                # Exponential backoff with jitter
+                wait_time = base_retry_delay * (2 ** attempt) + random.uniform(0, 0.1)
                 logger.warning(
-                    f"Error saving agent response (attempt {attempt + 1}/{max_retries}): {e}. "
-                    f"Retrying in {wait_time}s..."
+                    f"Database connection error saving agent response (attempt {attempt + 1}/{max_retries}): {e}. "
+                    f"Retrying in {wait_time:.2f}s..."
                 )
                 await asyncio.sleep(wait_time)
+                # Try to reconnect pool if it's closed
+                if hasattr(db, 'pool') and hasattr(db.pool, 'check'):
+                    try:
+                        db.pool.check()
+                    except Exception:
+                        pass
             else:
                 logger.error(f"Failed to save agent response after {max_retries} attempts: {e}", exc_info=True)
         except Exception as e:
@@ -174,7 +190,7 @@ def extract_state_from_formatted_output(formatted_output: Optional[str]) -> Opti
     return None
 
 
-def update_global_state_from_messages(messages: List[Dict], global_state: GlobalIdeaState) -> GlobalIdeaState:
+def update_global_state_from_messages(messages: List[Dict]) -> GlobalIdeaState:
     """
     Update global idea state from completed messages.
     Only updates from messages where state == "completed".
@@ -186,10 +202,14 @@ def update_global_state_from_messages(messages: List[Dict], global_state: Global
     Returns:
         Updated GlobalIdeaState instance
     """
-    if not messages or not global_state:
-        return global_state
+    if not messages:
+        return GlobalIdeaState()
     
     try:
+        
+        global_state = GlobalIdeaState()
+        
+        
         for msg in messages:
             # Only process assistant messages with formatted_output
             if msg.get("role") != "assistant":
@@ -205,89 +225,62 @@ def update_global_state_from_messages(messages: List[Dict], global_state: Global
                 continue
             
             state = parsed_output.get("state")
+            
             if state != "completed":
                 continue
             
             # Update global state with the structured response
             try:
-                # Use model_validate to update only matching fields
-                global_state.model_validate(parsed_output, strict=False)
+                # Get current state as dict
+                current_state_dict = global_state.model_dump()
+                
+                # Filter out None values from parsed_output to avoid overwriting existing values
+                # Only update fields that have actual values (not None)
+                updates = {k: v for k, v in parsed_output.items() if v is not None}
+                
+                # Merge updates into current state
+                merged_state = {**current_state_dict, **updates}
+                
+                # Create new state instance from merged dict
+                global_state = GlobalIdeaState.model_validate(merged_state, strict=False)
                 logger.debug(f"Updated global state from stage {msg.get('stage')} completed message")
             except Exception as e:
                 logger.warning(f"Error updating global state from message: {e}")
-                continue
-        
+            
         return global_state
+        
     except Exception as e:
         logger.error(f"Error updating global state from messages: {e}", exc_info=True)
-        return global_state
+        return GlobalIdeaState()
 
 
 def determine_current_stage(messages: List[Dict]) -> int:
     """
-    Determine the current stage based on completed states in messages.
-    
-    Stages are considered completed if there's a message with:
-    - role == "assistant"
-    - formatted_output with state == "completed"
-    - stage matching the stage number
-    
-    Args:
-        messages: List of message dictionaries
-        
-    Returns:
-        Current stage number (1-8). Returns 1 if no completed stages found.
+        Determine the current stage based on the last message.
     """
-    if not messages:
-        return 1
-    
-    # Track which stages are completed
-    completed_stages = set()
-    
     try:
-        for msg in messages:
-            # Only check assistant messages with formatted_output
-            if msg.get("role") != "assistant":
-                continue
+        last_message = messages[-1]
+        last_message_stage = last_message.get("stage")
+        
+        if last_message_stage == 8 and last_message.get("role") == "assistant":
             
-            formatted_output = msg.get("formatted_output")
-            if not formatted_output:
-                continue
-            
-            # Check if state is completed
-            state = extract_state_from_formatted_output(formatted_output)
-            if state == "completed":
-                stage = msg.get("stage")
-                if stage and isinstance(stage, int) and 1 <= stage <= 8:
-                    completed_stages.add(stage)
+            parsed_output = parse_formatted_output(last_message.get("formatted_output"))
+            if parsed_output and parsed_output.get("state") == "completed":
+                return 9
+            else:
+                return 8
         
-        # Current stage is the next incomplete stage
-        # If stages 1-3 are completed, current stage is 4
-        # If no stages are completed, current stage is 1
-        if not completed_stages:
-            return 1
-        
-        # Find the highest completed stage
-        max_completed = max(completed_stages)
-        
-        # If all stages 1-8 are completed, return 8
-        # Otherwise, return the next stage after the highest completed
-        if max_completed >= 8:
-            return 8
-        
-        return max_completed + 1
+        return last_message_stage
         
     except Exception as e:
         logger.error(f"Error determining current stage: {e}", exc_info=True)
         return 1
 
-
 async def fetch_session_messages(
     session_id: str,
     db,
     idea_state_stage: int,
-    global_state: Optional[GlobalIdeaState] = None
-) -> Optional[ChatResponse]:
+) -> tuple:
     """
     Fetch all messages for a session from the database with retry logic.
     Updates global_idea_state from completed messages and determines current stage.
@@ -302,15 +295,16 @@ async def fetch_session_messages(
         ChatResponse with messages list and updated idea_state_stage, or None if fetch failed
     """
     if not db:
-        return None
+        return (None, GlobalIdeaState())
     
     max_retries = 3
-    retry_delay = 0.5
+    base_retry_delay = 0.5
     
     for attempt in range(max_retries):
         try:
             chat_messages = db.get_chat_messages_by_session(session_id)
             # Convert ChatMessageModel to dict format for ChatResponse
+            # Skip messages with content "Stage completed"
             messages_list = [
                 {
                     "role": msg.role,
@@ -325,15 +319,9 @@ async def fetch_session_messages(
                 for msg in chat_messages
             ]
             
-            logger.info(f"Fetched {len(messages_list)} messages for session {session_id}")
-            
             # Update global state from completed messages if provided
-            if global_state and messages_list:
-                try:
-                    update_global_state_from_messages(messages_list, global_state)
-                    logger.debug(f"Updated global state from messages for session {session_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to update global state from messages: {e}")
+            global_state = update_global_state_from_messages(messages_list)
+            logger.debug(f"Updated global state from messages for session {session_id}")
             
             # Determine current stage based on completed states
             current_stage = determine_current_stage(messages_list)
@@ -356,45 +344,52 @@ async def fetch_session_messages(
                     }
                 ]
             
-            return ChatResponse(
+            return (ChatResponse(
                 connection_status="started",
-                messages=messages_list,
+                messages=[msg for msg in messages_list if msg.get("content") != "Stage completed"],
                 idea_state_stage=current_stage
-            )
+            ), global_state)
             
-        except (psycopg.OperationalError, psycopg.InterfaceError) as e:
+        except (psycopg.OperationalError, psycopg.InterfaceError, psycopg_pool.PoolTimeout) as e:
             if attempt < max_retries - 1:
-                wait_time = retry_delay * (2 ** attempt)
+                # Exponential backoff with jitter
+                wait_time = base_retry_delay * (2 ** attempt) + random.uniform(0, 0.1)
                 logger.warning(
-                    f"Database connection error (attempt {attempt + 1}/{max_retries}): {e}. "
-                    f"Retrying in {wait_time}s..."
+                    f"Database connection error fetching messages (attempt {attempt + 1}/{max_retries}): {e}. "
+                    f"Retrying in {wait_time:.2f}s..."
                 )
                 await asyncio.sleep(wait_time)
+                # Try to reconnect pool if it's closed
+                if hasattr(db, 'pool') and hasattr(db.pool, 'check'):
+                    try:
+                        db.pool.check()
+                    except Exception:
+                        pass
             else:
                 logger.error(
                     f"Failed to fetch messages from DB after {max_retries} attempts: {e}",
                     exc_info=True
                 )
                 # Return empty messages list to continue
-                return ChatResponse(
+                return (ChatResponse(
                     connection_status="started",
                     messages=[],
-                    idea_state_stage=idea_state_stage
-                )
+                    idea_state_stage=idea_state_stage if idea_state_stage is not None else 1
+                ), GlobalIdeaState())
         except Exception as e:
             logger.error(f"Error fetching messages from DB: {e}", exc_info=True)
             # Return empty messages list to continue
-            return ChatResponse(
+            return (ChatResponse(
                 connection_status="started",
                 messages=[],
-                idea_state_stage=idea_state_stage
-            )
+                idea_state_stage=idea_state_stage if idea_state_stage is not None else 1
+            ), GlobalIdeaState())
     
-    return ChatResponse(
+    return (ChatResponse(
         connection_status="started",
         messages=[],
         idea_state_stage=idea_state_stage
-    )
+    ), GlobalIdeaState())
 
 
 async def get_conversation_history(session_id: str, db) -> List:
@@ -466,4 +461,63 @@ async def get_conversation_history_by_stage(session_id: str, stage: int, db) -> 
     except Exception as e:
         logger.error(f"Error fetching conversation history by stage: {e}", exc_info=True)
         return []
+
+
+async def get_last_stage_messages(session_id: str, db) -> tuple:
+    """
+    Fetch all messages for a session and return all messages from the last stage with its stage number.
+    
+    Args:
+        session_id: The session ID to fetch messages for
+        db: Database instance
+    
+    Returns:
+        Tuple of (List of LangChain messages, stage number) for all messages with the highest stage.
+        Returns ([], 1) if no messages found or on error.
+    """
+    if not db:
+        return ([], 1)
+    
+    try:
+        chat_messages = db.get_chat_messages_by_session(session_id)
+        
+        if not chat_messages:
+            logger.debug(f"No messages found for session {session_id}")
+            return ([], 1)
+        
+        # Find the message with the highest stage number
+        stages = [msg.stage for msg in chat_messages if msg.stage is not None]
+        if not stages:
+            logger.debug(f"No messages with valid stage found for session {session_id}")
+            return ([], 1)
+        
+        max_stage = max(stages)
+        last_stage_messages = [msg for msg in chat_messages if msg.stage == max_stage]
+        
+        if not last_stage_messages:
+            logger.debug(f"No messages found for session {session_id} at stage {max_stage}")
+            return ([], 1)
+        
+        # Convert all messages from the last stage to LangChain message format
+        langchain_messages = []
+        for msg in last_stage_messages:
+            if msg.role == "user":
+                langchain_message = HumanMessage(content=msg.content)
+                langchain_messages.append(langchain_message)
+            elif msg.role == "assistant":
+                if msg.formatted_output:
+                    langchain_message = AIMessage(content=msg.formatted_output)
+                else:
+                    langchain_message = AIMessage(content=msg.content)
+                langchain_messages.append(langchain_message)
+            else:
+                logger.warning(f"Unknown role {msg.role} for message in session {session_id}, skipping")
+                continue
+        
+        logger.info(f"Retrieved {len(langchain_messages)} messages from last stage {max_stage} for session {session_id}")
+        # Return all messages from the last stage
+        return (langchain_messages, max_stage)
+    except Exception as e:
+        logger.error(f"Error fetching last stage messages: {e}", exc_info=True)
+        return ([], 1)
 

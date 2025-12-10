@@ -3,6 +3,7 @@ from typing import Optional, List
 
 # Import nested models from other states
 from src.states.team_profile_agent_state import TeamMember
+from src.models.chat_transfer_model import UserPreferences
 
 class GlobalIdeaState(BaseModel):
     """
@@ -62,3 +63,6 @@ class GlobalIdeaState(BaseModel):
     integrations_needed: Optional[List[str]] = None
     data_needed_for_MVP: Optional[List[str]] = None
     constraints: Optional[List[str]] = None
+    
+    # User Preferences
+    user_preferences: Optional[UserPreferences] = None
