@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     else:
         try:
             model = OpenAILLM().get_llm_model()
-            workflow = Workflow(model=model)
+            workflow = Workflow(model=model, db=db)
 
             app.state.workflow = workflow
             logger.info("Workflow initialized successfully.")

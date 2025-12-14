@@ -1,0 +1,12 @@
+{
+  "chat_id": "968073e1-66ed-40ec-9f35-61002579247c",
+  "session_id": "a831e5b8-57bf-4e6f-9a05-8008f2288a52",
+  "user_id": null,
+  "role": "assistant",
+  "formatted_output": "{\"budget_range\": \"\\u20b90\\u2013\\u20b95,000 (aiming for zero/near-zero spend)\", \"tools_they_already_use\": [\"Lovable (no-code builder)\", \"Lovable workflows and DB\", \"Lovable built-in hosting\", \"Razorpay (test mode)\", \"Notion\", \"Figma\"], \"time_constraints\": \"Both founders have full-time jobs, realistically 10\\u201320 hours/week each (mostly evenings and weekends), for the next 4 weeks. No extra short-term commitments expected.\", \"assets_available\": [\"Software engineering and product design skills in-house\", \"Founders\\u2019 direct networks (friends, family, colleagues)\", \"Access to WhatsApp and Facebook groups for Mumbai/Hindi speakers\", \"Potential personal contacts for hyperlocal outreach\", \"Local friends for testing and feedback\"], \"follow_up_question\": \"\", \"state\": \"completed\"}",
+  "content": "Stage completed",
+  "metadata": {},
+  "stage": 8,
+  "created_at": "2025-12-10T12:34:00.505623Z",
+  "updated_at": "2025-12-10T12:34:00.505623Z"
+}

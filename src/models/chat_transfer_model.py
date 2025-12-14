@@ -14,11 +14,32 @@ class UserPreferences(BaseModel):
         default=None,
         description="Optional user email associated with the request."
     )
+    
 
+class Event(BaseModel):
+    """Event associated with the request."""
+    event_type: Literal[
+        "project_created",
+        "team_members_synced",
+        "sources_updated",
+        "sprint_plan_generated",
+        "narrative_sections_started",
+        "completed"
+        ] = Field(
+        description="Type of event."
+    )
+    event_status: Literal["started", "completed"] = Field(
+        "started",
+        description="Status of the event."
+    )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Project ID associated with the request."
+    )
 class ChatRequest(BaseModel):
     """Incoming request from client → server."""
 
-    connection_status: Literal["started", "active", "error", "disactive"] = Field(
+    connection_status: Literal["started", "active", "events_streaming", "events_completed", "error", "disactive"] = Field(
         "active",
         description="Type of request."
     )
@@ -39,12 +60,15 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional user preferences associated with the request."
     )
-    
+    event: Optional[Event] = Field(
+        default=None,
+        description="Event associated with the request."
+    )
 
 class ChatResponse(BaseModel):
     """Server → client response."""
     
-    connection_status: Literal["started", "active", "error", "disactive"] = Field(
+    connection_status: Literal["started", "active", "events_streaming", "events_completed", "error", "disactive"] = Field(
         "active",
         description="Status of the chat connection."
     )
@@ -69,5 +93,9 @@ class ChatResponse(BaseModel):
     idea_state_stage: int = Field(
         default=0, # means not started
         description="Current stage of the idea state."
+    )
+    event: Optional[Event] = Field(
+        default=None,
+        description="Event associated with the response."
     )
     

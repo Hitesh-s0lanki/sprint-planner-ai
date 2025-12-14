@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import AsyncGenerator, List, Dict, Any, Union, Optional
+from typing import AsyncGenerator, List, Dict, Any, Union
 
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ProviderStrategy
@@ -12,7 +12,6 @@ from src.tools.research_tool import research_tool
 
 logger = logging.getLogger(__name__)
 
-
 class SprintPlannerAgent:
 
     def __init__(self, model):
@@ -21,6 +20,7 @@ class SprintPlannerAgent:
         self.model = model
 
         self.tools = [research_tool]
+        self.messages = []
 
         # Create agent with structured output binding
         self.agent = create_agent(
@@ -108,142 +108,97 @@ class SprintPlannerAgent:
     # ─────────────────────────────────────────
 
     @staticmethod
-    def _build_week_prompt(idea_context: str, week: int) -> str:
+    def _build_week_prompt(week: int) -> str:
         """
-        Build the user-facing prompt for a specific week.
-        You can customize the text for each week theme here.
+        Build a clear, execution-focused prompt for a specific sprint week.
         """
-        if week == 1:
-            week_context = (
-                "This is **Week 1** sprint planning.\n\n"
-                "- This is the start of the idea → execution journey.\n"
-                "- Focus on clarity, foundations, and first real-world actions.\n"
-                "- Keep tasks small, practical, and measurable.\n"
-                "- Touch as many of the business areas as reasonable: "
-                "Value Creation, Marketing, Sales, Value Delivery, Finance.\n"
-            )
-        elif week == 2:
-            week_context = (
-                "This is **Week 2** sprint planning.\n\n"
-                "- Assume Week 1 is mostly done.\n"
-                "- Focus on building and validating the first usable experience.\n"
-                "- Include real user/prospect interactions where possible.\n"
-            )
-        elif week == 3:
-            week_context = (
-                "This is **Week 3** sprint planning.\n\n"
-                "- Assume a basic version or prototype exists.\n"
-                "- Focus on traction experiments: marketing + sales.\n"
-                "- Track simple, quantitative metrics.\n"
-            )
-        else:
-            week_context = (
-                "This is **Week 4** sprint planning.\n\n"
-                "- Assume we have real learnings from Weeks 1–3.\n"
-                "- Focus on value delivery, refinement, and basic finance checks.\n"
-                "- Summarize and consolidate learnings into clear next steps.\n"
-            )
+
+        week_focus_map = {
+            1: (
+                "WEEK 1 - PROBLEM CLARITY & DEMAND SIGNALS\n"
+                "- This is the start of execution.\n"
+                "- Focus on understanding users, validating the core problem, and testing demand.\n"
+                "- Prefer conversations, observations, and simple shadow tests over building.\n"
+                "- Small, real-world actions only.\n"
+            ),
+            2: (
+                "WEEK 2 - MINIMUM VIABLE EXPERIENCE\n"
+                "- Assume Week 1 insights are available.\n"
+                "- Focus on building the smallest usable experience (manual or no-code is fine).\n"
+                "- Users should be able to try something end-to-end.\n"
+                "- Continue collecting feedback.\n"
+            ),
+            3: (
+                "WEEK 3 - TRACTION & CONVERSION EXPERIMENTS\n"
+                "- Assume a basic product or prototype exists.\n"
+                "- Focus on getting users: outreach, demos, trials, signups.\n"
+                "- Introduce simple sales or commitment signals.\n"
+                "- Track a few clear metrics.\n"
+            ),
+            4: (
+                "WEEK 4 - DELIVERY, LEARNING & NEXT STEPS\n"
+                "- Assume real user interactions from Weeks 1-3.\n"
+                "- Focus on delivering value to real users.\n"
+                "- Fix the biggest friction points.\n"
+                "- Capture learnings and define clear next steps.\n"
+            ),
+        }
+
+        week_context = week_focus_map.get(
+            week,
+            "Focus on practical execution aligned with the current stage."
+        )
 
         return (
-            "Here is my idea context:\n\n"
-            f"{idea_context}\n\n"
-            f"{week_context}\n"
-            f"Please generate the sprint plan for **Week {week}** only, as a single SprintWeek JSON object."
+            "You are planning a startup sprint.\n\n"
+            
+            f"{week_context}\n\n"
+            f"Generate the sprint plan for **Week {week} only**.\n"
+            "- Output a single SprintWeek JSON object.\n"
+            "- Include only actionable, execution-driven tasks.\n"
+            "- Every task must have a clear Definition of Done.\n"
         )
+
 
     def generate_week_sprint(
         self,
         idea_context: str,
         week: int,
-        previous_messages: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
-        """
-        High-level helper:
-        - Takes idea_context (used only for the first user message in a sequence)
-        - Takes an optional messages history (user+assistant messages)
-        - Appends a new user request for the given week
-        - Calls invoke() and returns the response dict
-
-        Usage:
-            messages = []
-            week1 = agent.generate_week_sprint(idea_context, week=1, previous_messages=messages)
-            week2 = agent.generate_week_sprint(idea_context, week=2, previous_messages=messages)
-            ...
-        """
-        messages = previous_messages[:] if previous_messages else []
-
-        # Only include the full idea context the first time.
-        # If previous_messages is empty, this is the first call in the conversation.
-        if not messages:
-            user_content = self._build_week_prompt(idea_context, week)
-        else:
-            # Subsequent weeks: we don't need to repeat full idea context,
-            # but we can still remind the model which week we're planning.
-            user_content = (
-                f"We are continuing sprint planning for the same idea as before.\n\n"
-                f"Please generate the sprint plan for **Week {week}** only, "
-                f"as a single SprintWeek JSON object."
-            )
-
-        messages.append(
-            {
+        
+        if week == 1:
+            self.messages.append({
                 "role": "user",
-                "content": user_content,
-            }
-        )
+                "content": f"""
+                   <<< idea context >>>
+                   {idea_context}
+                   <<< idea context >>>
+                """,
+            })
+            
+        self.messages.append({
+            "role": "user",
+            "content": self._build_week_prompt(week),
+        })
 
-        response = self.invoke(messages)
+        response = self.invoke(self.messages)
+        
+        self.messages.append({
+            "role": "assistant",
+            "content": str(response["structured_response"]),
+        })
 
-        # For proper conversation continuity, append a synthetic assistant message
-        # with the structured_response serialized as JSON string.
-        if "structured_response" in response:
-            try:
-                assistant_payload = json.dumps(response["structured_response"])
-            except TypeError:
-                assistant_payload = str(response["structured_response"])
-
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": assistant_payload,
-                }
-            )
-
-        # Return both the normalized response and updated messages
-        return {
-            "response": response,
-            "messages": messages,
-        }
-
-    def plan_full_4_week_sprint(
+        return response["structured_response"]
+    
+    def generate_all_weeks_sprint(
         self,
         idea_context: str,
     ) -> Dict[str, Any]:
-        """
-        Convenience method to generate all 4 weeks in one go,
-        while keeping a single conversation and passing idea_context only once.
-
-        Returns:
-            {
-                "weeks": [week1_dict, week2_dict, week3_dict, week4_dict],
-                "messages": full_messages_history
-            }
-        """
         all_weeks: List[Dict[str, Any]] = []
-        messages: List[Dict[str, str]] = []
-
         for week in range(1, 5):
-            result = self.generate_week_sprint(
-                idea_context=idea_context,
-                week=week,
-                previous_messages=messages,
-            )
-
-            response = result["response"]
-            messages = result["messages"]
-
-            week_struct = response.get("structured_response")
-            all_weeks.append(week_struct)
-
-        return SprintPlanningState(sprints=all_weeks)
-    
+            try:
+                all_weeks.append(self.generate_week_sprint(idea_context, week))
+            except Exception as e:
+                logger.error(f"Error in SprintPlannerAgent.generate_all_weeks_sprint: {e}", exc_info=True)
+                continue
+        return SprintPlanningState(sprints=all_weeks)       

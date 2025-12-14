@@ -257,20 +257,39 @@ def update_global_state_from_messages(messages: List[Dict]) -> GlobalIdeaState:
 def determine_current_stage(messages: List[Dict]) -> int:
     """
         Determine the current stage based on the last message.
+        Handles both dictionary messages and Pydantic model objects.
     """
     try:
-        last_message = messages[-1]
-        last_message_stage = last_message.get("stage")
+        # Check if messages list is empty
+        if not messages:
+            return 1
         
-        if last_message_stage == 8 and last_message.get("role") == "assistant":
-            
-            parsed_output = parse_formatted_output(last_message.get("formatted_output"))
+        last_message = messages[-1]
+        
+        last_message_stage = 0
+        
+        # instance of ChatMessageModel
+        if isinstance(last_message, ChatMessageModel):
+            last_message_stage = last_message.stage
+            role = last_message.role
+            formatted_output = last_message.formatted_output
+        else:
+            # dict
+            last_message_stage = last_message.get("stage")
+            role = last_message.get("role")
+            formatted_output = last_message.get("formatted_output")
+        
+        if last_message_stage == 8 and role == "assistant":
+            parsed_output = parse_formatted_output(formatted_output)
             if parsed_output and parsed_output.get("state") == "completed":
                 return 9
             else:
                 return 8
-        
-        return last_message_stage
+            
+        if last_message_stage == 9:
+            return 10
+
+        return last_message_stage if last_message_stage is not None else 1
         
     except Exception as e:
         logger.error(f"Error determining current stage: {e}", exc_info=True)
@@ -485,18 +504,12 @@ async def get_last_stage_messages(session_id: str, db) -> tuple:
             logger.debug(f"No messages found for session {session_id}")
             return ([], 1)
         
-        # Find the message with the highest stage number
-        stages = [msg.stage for msg in chat_messages if msg.stage is not None]
-        if not stages:
-            logger.debug(f"No messages with valid stage found for session {session_id}")
-            return ([], 1)
-        
-        max_stage = max(stages)
+        max_stage = determine_current_stage(chat_messages)
         last_stage_messages = [msg for msg in chat_messages if msg.stage == max_stage]
         
         if not last_stage_messages:
             logger.debug(f"No messages found for session {session_id} at stage {max_stage}")
-            return ([], 1)
+            return ([], max_stage)
         
         # Convert all messages from the last stage to LangChain message format
         langchain_messages = []
