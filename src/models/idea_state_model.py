@@ -1,7 +1,6 @@
 from typing import Optional, List
 from pydantic import BaseModel
 
-
 class TeamMember(BaseModel):
     name: Optional[str] = None
     profession: Optional[str] = None
@@ -9,14 +8,12 @@ class TeamMember(BaseModel):
     description: Optional[str] = None
     domain_expertise: Optional[str] = None
 
-
 class PreferredTechStack(BaseModel):
     frontend: Optional[str] = None
     backend: Optional[str] = None
     database: Optional[str] = None
     ai_models: Optional[str] = None
     cloud: Optional[str] = None
-
 
 class IdeaState(BaseModel):
     # required

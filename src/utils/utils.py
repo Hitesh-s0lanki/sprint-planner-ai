@@ -1,6 +1,9 @@
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+import uuid
+import logging
 
+logger = logging.getLogger(__name__)
 
 def markdown_to_blocknote(markdown: str) -> List[Dict[str, Any]]:
     """
@@ -169,3 +172,12 @@ def markdown_to_blocknote(markdown: str) -> List[Dict[str, Any]]:
 
     return blocks
 
+# helper: safe uuid
+def safe_uuid_or_none(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, TypeError):
+        logger.warning(f"Invalid UUID '{value}', setting to None")
+        return None

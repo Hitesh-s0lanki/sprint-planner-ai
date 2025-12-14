@@ -3,7 +3,6 @@ Streaming handler for chat responses.
 Handles the streaming of agent responses and delegates message storage to message_storage module.
 """
 
-import json
 import logging
 from typing import AsyncGenerator
 from src.models.chat_transfer_model import ChatResponse, ChatRequest
@@ -42,12 +41,12 @@ async def stream_generator(chat_request: ChatRequest, workflow, db=None) -> Asyn
                 chat_request.idea_state_stage,
             )
             
-            # even add the user preferences to the global state
+            # Add user preferences to the global state if provided
             if chat_request.user_preferences:
                 global_state.user_preferences = chat_request.user_preferences
             
-            # even add the user preferences to the global state
-            workflow.global_idea_state = global_state
+            # Thread-safe update: replace the entire global state atomically
+            workflow.set_global_idea_state(global_state)
             
             
             if initial_response:
@@ -58,18 +57,27 @@ async def stream_generator(chat_request: ChatRequest, workflow, db=None) -> Asyn
         if chat_request.user_message and chat_request.connection_status == "active":
             messages, last_stage = await get_last_stage_messages(chat_request.session_id, db)
             
+            # Thread-safe update: add user preferences to the global state if provided
+            if chat_request.user_preferences:
+                workflow.update_global_idea_state_field("user_preferences", chat_request.user_preferences)
+            
             # Ensure last_stage is a valid integer, default to 1 if None
-            if last_stage is None or not isinstance(last_stage, int) or last_stage < 1 or last_stage > 9:
+            if last_stage is None or not isinstance(last_stage, int) or last_stage < 1:
                 last_stage = 1
+                
+            if last_stage == 10:
+                yield f"{ChatResponse(connection_status='events_completed', idea_state_stage=9, response_content='All stages completed. Project created successfully.').model_dump_json()}\n"
+                return
+                
+            if last_stage <= 8:
+                await save_user_message(chat_request, db, last_stage)
+                # add this last user message to the messages list
+                messages.append(HumanMessage(content=chat_request.user_message))
             
-            await save_user_message(chat_request, db, last_stage)
-            
-            # add this last user message to the messages list
-            messages.append(HumanMessage(content=chat_request.user_message))
-    
-            # Execute the workflow and get the response
-            response = await workflow.execute(messages, last_stage, chat_request.session_id, chat_request.user_id, db, chat_request.user_preferences)
-            yield f"{response.model_dump_json()}\n"
+            # Execute the workflow and stream responses (including events)
+            # This handles both stages 1-8 and stage 9 (direct stage completion)
+            async for response in workflow.execute(messages, last_stage, chat_request.session_id, chat_request.user_id, db, chat_request.user_preferences):
+                yield f"{response.model_dump_json()}\n"
         
         elif chat_request.connection_status == "active" and not chat_request.user_message:
             logger.warning(f"User message is required.")
