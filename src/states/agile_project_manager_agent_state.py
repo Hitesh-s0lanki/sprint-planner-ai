@@ -7,7 +7,7 @@ class SprintTask(BaseModel):
     description: str  # must include Definition of Done / acceptance criteria textually
     priority: Literal["High", "Medium", "Low"]
     timeline_days: float
-    assigneeEmail: str
+    assigneeId: str
     sub_tasks: Optional[List[str]] = None
 
 

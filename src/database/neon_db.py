@@ -488,6 +488,7 @@ class NeonDB:
 
         - Ordered by created_at ASC (oldest → newest)
         - By default excludes trashed documents
+        - Matches Drizzle schema: session_id is VARCHAR(128), is_trashed is BOOLEAN
         """
         if include_trashed:
             sql = """
@@ -520,33 +521,41 @@ class NeonDB:
     # ─────────────────────────────────────────
     # Projects
     # ─────────────────────────────────────────
-    
+
     def create_project(
         self,
         *,
         key: str,
         name: str,
+        lead_user_id: str,
         description: Optional[str] = None,
         status: str = "active",  # 'active' | 'inactive' | 'archived'
-        lead_user_id: str,
+        team_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
-        Insert a new project.
+        Insert a new project (aligned with Drizzle `projects` table).
         """
+
+        # Safety check for enum (recommended)
+        if status not in {"active", "inactive", "archived"}:
+            raise ValueError(f"Invalid project status: {status}")
+
         sql = """
         INSERT INTO projects (
             key,
             name,
             description,
             project_status,
-            lead_user_id
+            lead_user_id,
+            team_ids
         )
         VALUES (
             %(key)s,
             %(name)s,
             %(description)s,
             %(status)s,
-            %(lead_user_id)s
+            %(lead_user_id)s,
+            %(team_ids)s
         )
         RETURNING *;
         """
@@ -557,6 +566,8 @@ class NeonDB:
             "description": description,
             "status": status,
             "lead_user_id": lead_user_id,
+            # postgres uuid[] expects list; default to empty list
+            "team_ids": team_ids or [],
         }
 
         row = self.fetch_one(sql, params)
@@ -564,6 +575,7 @@ class NeonDB:
             raise RuntimeError("Failed to create project")
 
         return row
+
 
     def update_project(
         self,
@@ -625,42 +637,80 @@ class NeonDB:
         self,
         *,
         project_id: str,
-        key: str,          # e.g. "SP-12"
+        key: str,                         # e.g. "SP-12"
         title: str,
+        sprint_week: int = 0,
+        tags: Optional[List[str]] = None,
         description: Optional[str] = None,
-        status: str = "backlog",   # enum: backlog|todo|in_progress|done|cancelled
+        ai_description: Optional[str] = None,
+        generated_by: str = "ai",         # "user" | "ai"
+        status: str = "todo",          # backlog|todo|in_progress|done|cancelled
         priority: str = "Medium",
         assignee_id: Optional[str] = None,
         reporter_id: Optional[str] = None,
         parent_task_id: Optional[str] = None,
+        timeline_days: Optional[float] = None,
+        start_date: Optional[datetime] = None,
         due_date: Optional[datetime] = None,
     ) -> Dict[str, Any]:
         """
-        Insert a new task.
+        Insert a new task matching the tasks table:
+
+        - project_id
+        - key
+        - title
+        - sprint_week
+        - tags
+        - description
+        - ai_description
+        - task_generated_by
+        - task_status
+        - priority
+        - assignee_id
+        - reporter_id
+        - parent_task_id
+        - timeline_days
+        - start_date
+        - due_date
         """
+        if tags is None:
+            tags = []
+
         sql = """
         INSERT INTO tasks (
             project_id,
             key,
             title,
+            sprint_week,
+            tags,
             description,
+            ai_description,
+            task_generated_by,
             task_status,
             priority,
             assignee_id,
             reporter_id,
             parent_task_id,
+            timeline_days,
+            start_date,
             due_date
         )
         VALUES (
             %(project_id)s,
             %(key)s,
             %(title)s,
+            %(sprint_week)s,
+            %(tags)s,
             %(description)s,
+            %(ai_description)s,
+            %(generated_by)s,
             %(status)s,
             %(priority)s,
             %(assignee_id)s,
             %(reporter_id)s,
             %(parent_task_id)s,
+            %(timeline_days)s,
+            %(start_date)s,
             %(due_date)s
         )
         RETURNING *;
@@ -670,12 +720,18 @@ class NeonDB:
             "project_id": project_id,
             "key": key,
             "title": title,
+            "sprint_week": sprint_week,
+            "tags": tags,
             "description": description,
+            "ai_description": ai_description,
+            "generated_by": generated_by,
             "status": status,
             "priority": priority,
             "assignee_id": assignee_id,
             "reporter_id": reporter_id,
             "parent_task_id": parent_task_id,
+            "timeline_days": timeline_days,
+            "start_date": start_date,
             "due_date": due_date,
         }
 
@@ -692,18 +748,27 @@ class NeonDB:
         project_id: Optional[str] = None,
         key: Optional[str] = None,
         title: Optional[str] = None,
+        tags: Optional[List[str]] = None,
         description: Optional[str] = None,
-        status: Optional[str] = None,
+        ai_description: Optional[str] = None,
+        generated_by: Optional[str] = None,   # user|ai
+        status: Optional[str] = None,         # backlog|todo|in_progress|done|cancelled
         priority: Optional[str] = None,
         assignee_id: Optional[str] = None,
         reporter_id: Optional[str] = None,
         parent_task_id: Optional[str] = None,
+        timeline_days: Optional[float] = None,
         due_date: Optional[datetime] = None,
     ) -> Dict[str, Any]:
         """
         Partially update a task by id.
         Only non-None fields are updated.
         Also bumps updated_at = NOW().
+
+        Matches tasks columns:
+        - project_id, key, title, tags, description, ai_description,
+          task_generated_by, task_status, priority, assignee_id,
+          reporter_id, parent_task_id, timeline_days, due_date
         """
         fields: Dict[str, Any] = {}
         if project_id is not None:
@@ -712,8 +777,14 @@ class NeonDB:
             fields["key"] = key
         if title is not None:
             fields["title"] = title
+        if tags is not None:
+            fields["tags"] = tags
         if description is not None:
             fields["description"] = description
+        if ai_description is not None:
+            fields["ai_description"] = ai_description
+        if generated_by is not None:
+            fields["task_generated_by"] = generated_by
         if status is not None:
             fields["task_status"] = status
         if priority is not None:
@@ -724,6 +795,8 @@ class NeonDB:
             fields["reporter_id"] = reporter_id
         if parent_task_id is not None:
             fields["parent_task_id"] = parent_task_id
+        if timeline_days is not None:
+            fields["timeline_days"] = timeline_days
         if due_date is not None:
             fields["due_date"] = due_date
 
@@ -737,6 +810,7 @@ class NeonDB:
             set_clauses.append(f"{col} = %({key_param})s")
             params[key_param] = value
 
+        # Always bump updated_at
         set_clauses.append("updated_at = NOW()")
 
         sql = f"""
@@ -751,6 +825,7 @@ class NeonDB:
             raise RuntimeError("Task not found or not updated")
 
         return row
+
     
     def create_task_dependency(
         self,
@@ -839,6 +914,44 @@ class NeonDB:
     # User management
     # ─────────────────────────────────────────
     
+    def get_user(self, clerk_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a user by ID.
+        
+        Args:
+            clerk_id: The clerk ID to fetch
+            
+        Returns:
+            User dictionary if found, None otherwise
+        """
+        sql = """
+        SELECT *
+        FROM users
+        WHERE clerk_id = %(clerk_id)s;
+        """
+        
+        params = {"clerk_id": clerk_id}
+        return self.fetch_one(sql, params)
+    
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a user by email address.
+        
+        Args:
+            email: The email address to search for
+            
+        Returns:
+            User dictionary if found, None otherwise
+        """
+        sql = """
+        SELECT *
+        FROM users
+        WHERE email = %(email)s;
+        """
+        
+        params = {"email": email}
+        return self.fetch_one(sql, params)
+    
     def update_user(
         self,
         user_id: str,
@@ -888,6 +1001,128 @@ class NeonDB:
         row = self.fetch_one(sql, params)
         if row is None:
             raise RuntimeError("User not found or not updated")
+
+        return row
+    
+    def get_or_create_user_by_email(
+        self,
+        email: str,
+        name: Optional[str] = None,
+        profession: str = "",
+        description: str = "",
+        role: str = "individual",
+        clerk_id: str = "user_invited",
+    ) -> Dict[str, Any]:
+        """
+        Fetch a user by email, or create one if it doesn't exist.
+        
+        Args:
+            email: Email of the user
+            name: Optional name to assign on creation
+            profession: User profession (default empty as per schema)
+            description: User description (default empty as per schema)
+            role: Role to assign ('individual' by default)
+            clerk_id: Clerk identifier; defaults to 'user_invited'
+        
+        Returns:
+            A full user row (existing or newly created)
+        """
+
+        # 1. Try fetching an existing user
+        existing_user = self.get_user_by_email(email)
+        if existing_user:
+            return existing_user
+
+        # 2. Create a new user since none exists
+        sql = """
+        INSERT INTO users (
+            clerk_id,
+            email,
+            name,
+            role,
+            description,
+            profession
+        )
+        VALUES (
+            %(clerk_id)s,
+            %(email)s,
+            %(name)s,
+            %(role)s,
+            %(description)s,
+            %(profession)s
+        )
+        RETURNING *;
+        """
+
+        params = {
+            "clerk_id": clerk_id,
+            "email": email,
+            "name": name,
+            "role": role,  # 'individual' default
+            "description": description,
+            "profession": profession,
+        }
+
+        new_user = self.fetch_one(sql, params)
+        if not new_user:
+            raise RuntimeError("Failed to create user")
+
+        return new_user
+    
+
+    # ─────────────────────────────────────────
+    # Narrative Sections
+    # ─────────────────────────────────────────
+
+    def create_narrative_section(
+        self,
+        *,
+        project_id: str,
+        category: str,     # narrative | product | engineering | ...
+        name: str,
+        section_type: str = "text",  # text | files
+        content: str = "",
+        position: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Insert a narrative section.
+        """
+        sql = """
+        INSERT INTO narrative_sections (
+            project_id,
+            category,
+            name,
+            type,
+            content,
+            position,
+            created_at,
+            updated_at
+        )
+        VALUES (
+            %(project_id)s,
+            %(category)s,
+            %(name)s,
+            %(type)s,
+            %(content)s,
+            %(position)s,
+            NOW(),
+            NOW()
+        )
+        RETURNING *;
+        """
+
+        params = {
+            "project_id": project_id,
+            "category": category,
+            "name": name,
+            "type": section_type,
+            "content": content,
+            "position": position,
+        }
+
+        row = self.fetch_one(sql, params)
+        if row is None:
+            raise RuntimeError("Failed to create narrative section")
 
         return row
     
